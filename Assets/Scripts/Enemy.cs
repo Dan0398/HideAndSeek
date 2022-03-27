@@ -11,120 +11,149 @@ public class Enemy : MonoBehaviour
         Walking,
         Catching
     }
+    StateMachine currentState;
     NavMeshAgent Agent;
-    Vector3 NextPosition, PrevPosition;
-    [SerializeField] StateMachine MyState, PrevFrameState;
-    float CurrentStateTime = 2;
+    Vector3 NextPosition;
+    Vector3 PrevPosition; //For apply endpoint for agent when updated
+    float CurrentStateTime = 0;
     [SerializeField] float IdleStateTime = 1.5f;
-    [SerializeField] Material MyMaterial;
-    [SerializeField] [Range(0, 1)] float Agressive = 0;
-    [SerializeField] [Range(0, 10)] float ViewLeight = 3;
+    Material MyMaterial;
+    AudioSource ExclamationSound;
     [SerializeField] Transform ViewTrigger;
-    float AgressiveSaver=2, ViewLeightSaver=2;
+    [SerializeField] [Range(0, 10)] float viewLeight = 3;
+    bool agressive = false;
+    StateMachine CurrentState
+    {
+        get => currentState;
+        set
+        {
+            if (currentState == value) return;
+            currentState = value;
+            ProcessSwitchState();
+        }
+    }
+    bool Agressive
+    {
+        get => agressive;
+        set
+        {
+            if (agressive == value) return;
+            agressive = value;
+            ChangeColorAnimated();
+        }
+    }
+
     void Start()
     {
         Agent = GetComponent<NavMeshAgent>();
         MyMaterial = new Material(GetComponentInChildren<MeshRenderer>().material);
+        ViewTrigger.localScale = new Vector3(viewLeight, 1, viewLeight);
         GetComponentInChildren<MeshRenderer>().material = MyMaterial;
-        Player.Instance.makedToHighNoise += GetPos;
+        ExclamationSound = GetComponent<AudioSource>();
+        Player.PlayerMakesToHighNoise += UpdatePlayerPosition;
     }
-    private void OnDestroy() { Player.Instance.makedToHighNoise -= GetPos; }
-    private void OnDisable() { Player.Instance.makedToHighNoise -= GetPos; }
 
-    void GetPos()
-    {
-        MyState = StateMachine.Catching;
-        NextPosition = Player.Instance.transform.position;
+    private void OnDestroy() 
+    { 
+        Player.PlayerMakesToHighNoise -= UpdatePlayerPosition; 
     }
-    internal void EyeView(Vector3 Position)
-    {
-        MyState = StateMachine.Catching;
-        NextPosition = Position;
+    private void OnDisable() 
+    { 
+        Player.PlayerMakesToHighNoise -= UpdatePlayerPosition; 
     }
-    // Update is called once per frame
+
+    public async void ResetState()
+    {
+        if (Agent == null) return;
+        Agent.enabled = false;
+        CurrentState = StateMachine.Walking;
+        await System.Threading.Tasks.Task.Delay(30);
+        Agent.enabled = true;
+    }
+
+    internal void UpdatePlayerPosition(Vector3 PlayerPos)
+    {
+        CurrentState = StateMachine.Catching;
+        NextPosition = PlayerPos;
+    }
+    
     void FixedUpdate()
     {
-        ChangeViewLeight();
-        ChangeMyColor();
-        Action();
-    }
-    void Action()
-    {
-        switch (MyState)
+        if (CurrentState == StateMachine.Idle)
         {
-            case StateMachine.Idle:
-                if (CurrentStateTime <= IdleStateTime) CurrentStateTime += Time.fixedDeltaTime;
-                else
-                {
-                    if (!Agent.hasPath)
-                    {
-                        GetNewPoint();
-                    }
-                    else
-                    {
-                        CurrentStateTime = 0;
-                        MyState = StateMachine.Walking;
-                    }
-                }
-                break;
-            case StateMachine.Walking:
+            IdleAction();
+        }
+        if (CurrentState == StateMachine.Walking)
+        {
+            WalkingAction();
+        }
+        if (CurrentState == StateMachine.Catching)
+        {
+            CatchingAction();
+        }
+    }
 
-                if (!Agent.hasPath || Agent.pathPending)
-                {
-                    MyState = StateMachine.Idle;
-                }
-                break;
-            case StateMachine.Catching:
-                if (PrevPosition != NextPosition)
-                {
-                    Agent.SetDestination(NextPosition);
-                    PrevPosition = NextPosition;
-                }
-                if (!Agent.pathPending && !Agent.hasPath)
-                {
-                    StartCoroutine(ChangeColor(false));
-                    CurrentStateTime = 0;
-                    MyState = StateMachine.Idle;
-                }
-                    break;
-        }
-        if (PrevFrameState!= MyState)
+    void IdleAction()
+    {
+        if (CurrentStateTime <= IdleStateTime) 
         {
-            if (MyState == StateMachine.Catching)
+            CurrentStateTime += Time.fixedDeltaTime;
+        }
+        else
+        {
+            if (!Agent.hasPath)
             {
-                GetComponent<AudioSource>().Play();
-                StartCoroutine(ChangeColor(true));
+                Agent.SetDestination(MapMaker.Instance.GetPath(transform.position));
             }
-            PrevFrameState = MyState;
+            else
+            {
+                CurrentStateTime = 0;
+                CurrentState = StateMachine.Walking;
+            }
         }
     }
-    void GetNewPoint()
+
+    void WalkingAction()
     {
-        Agent.SetDestination(MapMaker.Instance.GetPath(transform.position));
-    }
-    IEnumerator ChangeColor(bool GoingRed)
-    {
-        for (int i = 0; i <= 30; i++)
+        if (!Agent.hasPath || Agent.pathPending)
         {
-            Agressive = GoingRed? i / 30f : 1-(i-30f);
-            yield return new WaitForEndOfFrame();
-        }
-        yield return null;
-    }
-    void ChangeViewLeight()
-    {
-        if (ViewLeightSaver != ViewLeight)
-        {
-            ViewTrigger.localScale = new Vector3(ViewLeight, 1, ViewLeight);
-            ViewLeightSaver = ViewLeight;
+            CurrentState = StateMachine.Idle;
         }
     }
-    void ChangeMyColor()
+
+    void CatchingAction()
     {
-        if (AgressiveSaver != Agressive)
+        if (PrevPosition != NextPosition)
         {
-            MyMaterial.SetColor("_Color", new Color(1,1 - Agressive, 1 - Agressive));
-            AgressiveSaver = Agressive;
+            Agent.SetDestination(NextPosition);
+            PrevPosition = NextPosition;
+        }
+        if (!Agent.pathPending && !Agent.hasPath)
+        {
+            CurrentStateTime = 0;
+            CurrentState = StateMachine.Idle;
+        }
+    }
+
+    void ProcessSwitchState()
+    {
+        Agressive = CurrentState == StateMachine.Catching;
+        if (Agressive)
+        {
+            ExclamationSound.Play();
+        }
+    }
+
+    async void ChangeColorAnimated()
+    {
+        float Lerp = 0;
+        Color OldColor = MyMaterial.GetColor("_Color");
+        Color NewColor = (agressive ? Color.red : Color.white);
+        for (int i = 0; i <= 90; i+=5)
+        {
+            Lerp = Mathf.Sin(i*Mathf.Deg2Rad);
+            MyMaterial.SetColor("_Color", Color.Lerp(OldColor, NewColor, Lerp));
+            await System.Threading.Tasks.Task.Delay(30);
         }
     }
 }

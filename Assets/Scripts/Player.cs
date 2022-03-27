@@ -1,81 +1,96 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
-using UnityEngine.UI;
+﻿using UnityEngine;
 
 public class Player : MonoBehaviour
 {
-    static public Player Instance;
     [SerializeField] float Speed;
-    [SerializeField] Vector3 MoveDirection;
-    public Transform PlayerModel;
+    Vector3 MoveDirection;
+    float RealSpeed;
 
-    int CoolDownNoise = 2, StepsSoundLVL = 3;
+    //Noise
+    const int COOLDOWN_EFFECT = -2; 
+    const int STEPS_SOUND_LEVEL = 3;
+    const int NOISE_MAX_LEVEL = 10;
+    [SerializeField, Range(0,10)] float NoiseLevel;    
 
-    [SerializeField] bool isMoving;
-    [SerializeField] [Range(0,10)] float Noise;
-
-    [SerializeField] AudioClip[] Steps;
-    AudioSource StepsSource;
+    //Steps and sound
+    public static System.Action<Vector3> PlayerMakesToHighNoise;
+    [Header("Steps"), SerializeField] AudioClip[] StepsClips;
     [SerializeField] float StepFreq;
+    AudioSource StepsSource;
     float StepTimer;
 
-    Interface ui;
-    public System.Action makedToHighNoise;
+    bool isMoving => RealSpeed > 0;
 
     private void Awake()
     {
-        if (Instance != null) Destroy(gameObject);
-        else Instance = this;
-        makedToHighNoise += TooHigh;
+        ResetState();
         StepsSource = GetComponent<AudioSource>();
     }
+
+    public void ResetState()
+    {
+        StepTimer = 0;
+        NoiseLevel = 0;
+    }
+
     void FixedUpdate()
     {
-        //Движение игрока
-        MoveDirection = new Vector3(Input.GetAxis("Horizontal"), 0, Input.GetAxis("Vertical"));
-        //Без читов при движении по диагонали
-        if (MoveDirection.magnitude > 1) MoveDirection /= MoveDirection.magnitude;
-        transform.position +=(MoveDirection * Speed* Time.fixedDeltaTime);
-        isMoving = MoveDirection.magnitude > 0;
-        //Поворот модельки
-        if (isMoving && PlayerModel!= null) PlayerModel.transform.LookAt(transform.position + MoveDirection * 2);
-        //Собсна шум
-        Noise = Mathf.Clamp(Noise + Time.fixedDeltaTime * (isMoving?(StepsSoundLVL):(-CoolDownNoise)), 0f, 10f);
-        if (Noise >= 10) makedToHighNoise.Invoke();
-        if (isMoving)
-        {
-            if (StepTimer > 1 / StepFreq) {
-                StepTimer = 0;
-                MakeStepNoise();
-            }
-            else StepTimer += Time.fixedDeltaTime;
-        }
-        else StepTimer = 0;
-
+        MovePlayer();
+        RotatePlayer();
+        MakeStepNoise();
+        CalculateNoiseAndAlarm();
         UpdateUI();
     }
-    void UpdateUI()
+
+    void MovePlayer()
     {
-        if (ui == null) ui = Interface.instance;
-        ui.AnimateNoise(Noise / 10f);
+        MoveDirection = new Vector3(Input.GetAxis("Horizontal"), 0, Input.GetAxis("Vertical"));
+        RealSpeed = MoveDirection.magnitude;
+        //Without Speedup by diagonals
+        if (RealSpeed > 1) MoveDirection /= RealSpeed;
+        transform.position += MoveDirection * Speed * Time.fixedDeltaTime;
     }
+
+    void RotatePlayer()
+    {
+        if (!isMoving) return;
+        transform.LookAt(transform.position + MoveDirection * 2);
+    }
+
     void MakeStepNoise()
     {
-        StepsSource.clip = Steps[Random.Range(0, Steps.Length)] ;
-        StepsSource.Play();
+        if (!isMoving)
+        {
+            StepTimer = 0;
+            return;
+        }
+        StepTimer += Time.fixedDeltaTime;
+        if (StepTimer > 1 / StepFreq) 
+        {
+            StepTimer = 0;
+            StepsSource.clip = StepsClips[Random.Range(0, StepsClips.Length)] ;
+            StepsSource.Play();
+        }
     }
-    void TooHigh()
+
+    void CalculateNoiseAndAlarm()
     {
-        //Debug.Log("Какого дьявола ты здесь шумишь?!?!");
+        NoiseLevel += Time.fixedDeltaTime * (isMoving?(STEPS_SOUND_LEVEL):(COOLDOWN_EFFECT));
+        NoiseLevel = Mathf.Clamp(NoiseLevel , 0f, NOISE_MAX_LEVEL);
+        if (NoiseLevel >= NOISE_MAX_LEVEL) 
+        {
+            PlayerMakesToHighNoise?.Invoke(transform.position);
+        }
     }
-    private void OnTriggerEnter(Collider other)
+
+    void UpdateUI()
     {
-        if (other.CompareTag("Finish")) Interface.instance.End(true);
-        if (other.CompareTag("Enemy")) Interface.instance.End(false);
+        InGameInterface.ApplyNoiseLevel(NoiseLevel / (float)NOISE_MAX_LEVEL);
     }
-    public void SwitchCollisions(bool isEnabled)
+
+    void OnTriggerEnter(Collider other)
     {
-        foreach (Collider coll in GetComponentsInChildren<Collider>()) coll.enabled = isEnabled;
+        if (other.CompareTag("Finish")) InGameInterface.LevelCompleted();
+        if (other.CompareTag("Enemy")) InGameInterface.GameOver();
     }
 }

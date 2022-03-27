@@ -1,13 +1,14 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using UnityEngine;
 
 public class DangerZone : MonoBehaviour
 {
     [SerializeField] Enemy Parent;
-    private void OnTriggerEnter(Collider other)
+
+    private void OnTrigger(Collider Target)
     {
-        if (other.CompareTag("Player"))
-        { Parent.EyeView(other.transform.position); }
+        if (Target.CompareTag("Player"))
+        { 
+            Parent.UpdatePlayerPosition(Target.transform.position); 
+        }
     }
 }

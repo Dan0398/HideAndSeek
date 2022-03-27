@@ -1,12 +1,17 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using UnityEngine;
 
 public class CameraAnim : MonoBehaviour
 {
-    // Start is called before the first frame update
+    Vector3 DefaultPosition;
+    [SerializeField, Range(0, 1.0f)] float AnimationWide;
+
+    void Start()
+    {
+        DefaultPosition = transform.position - AnimationWide * 0.5f * Vector3.right;
+    }
+
     private void OnPreRender()
     {
-        transform.position = new Vector3(-0.4f + 0.8f * (Input.mousePosition.x / Screen.width), 0.72f, -2.46f);
+        transform.position = DefaultPosition + AnimationWide * Vector3.right * (Input.mousePosition.x / Screen.width);
     }
 }

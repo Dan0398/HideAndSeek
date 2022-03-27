@@ -2,53 +2,193 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
-using Unity.Jobs;
+
 public class MapMaker : MonoBehaviour
 {
     public static MapMaker Instance;
-    [SerializeField] [Range(0, 20)] int mapSize = 10;
-    [SerializeField] GameObject Floor;
-    [SerializeField] GameObject LeftWall, RightWall, FrontWall, BackWall;
-    [SerializeField] GameObject PlayerPrefab, EnemyPrefab, FinishPrefab, BoxPrefab, Finish;
-    Vector3 FinishPos, PlayerPos, Enemy1Pos, Enemy2Pos;
-    [SerializeField] [Range(0, 80)] int Obstacles;
+    MapConfig ActualConfig;
+    GameObject[] CreatedWalls;
+    Player playerOnScene;
+    Enemy[] Enemies;
+    [SerializeField] Transform Floor;
+    Transform LeftWall, RightWall, FrontWall, BackWall;
+    [SerializeField] GameObject PlayerPrefab, EnemyPrefab, FinishPrefab, BoxPrefab;
+    GameObject FinishOnScene;
     NavMeshSurface surface;
     NavMeshPath path;
 
+    int RealCountOfWalls;
     int horizontal, vertical;
-    bool[,] isTilesBusy { get => new bool[mapSize, mapSize]; }
+    bool[,] BusyPlaces;
+
     enum TileType
     {
         Player,
         Enemy,
         Box
     }
+
     void Start()
     {
         Instance = this;
         path = new NavMeshPath();
-        
         surface = GetComponent<NavMeshSurface>();
-        Finish = Instantiate(FinishPrefab, new Vector3(((mapSize - 2) / 2f) * Random.Range(-1f, 1f), 0, (mapSize + 1) / 2f), Quaternion.identity);
-        FinishPos = Finish.transform.position;
-        MakeATile(TileType.Player);
-        MakeATile(TileType.Enemy);
-        MakeATile(TileType.Enemy);
-        for (int i =0; i < Obstacles; i++) 
-        {
-             MakeATile(TileType.Box);
-        }
-
-        Floor.transform.localScale = Vector3.one * mapSize;
-        LeftWall.transform.localScale = Vector3.one * mapSize;
-        RightWall.transform.localScale = Vector3.one * mapSize;
-        BackWall.transform.localScale = Vector3.one * mapSize;
-        FrontWall.transform.localScale = Vector3.one * mapSize;
-        LeftWall.transform.position = Vector3.left * mapSize * 0.5f;
-        RightWall.transform.position = Vector3.right * mapSize * 0.5f;
-        BackWall.transform.position = Vector3.back * mapSize * 0.5f;
-        FrontWall.transform.position = Vector3.forward * mapSize * 0.5f;
+        CreateScene();
     }
+
+    public static void BuildNewScene(MapConfig NewConfig)
+    {
+        Instance.ActualConfig = NewConfig;
+        Instance.CreateScene();
+    }
+
+    public static void BuildNewScene()
+    {
+        Instance.CreateScene();
+    }
+
+    void CreateScene()
+    {
+        CheckConfig();
+        CreateWalls();
+        CreateAndPlacePlayer();
+        CreateAndPlaceEnemies();
+        RebuildMapWallsAndFloor();
+        PlaceWalls();
+    }
+
+    void CheckConfig()
+    {
+        if (ActualConfig == null)
+        {
+            ActualConfig = new MapConfig();
+        }
+        RealCountOfWalls = (ActualConfig.MapScale * ActualConfig.MapScale)/ 100 * ActualConfig.ObstaclesPercent;
+        BusyPlaces = new bool[ActualConfig.MapScale, ActualConfig.MapScale];
+    }
+
+    void CreateWalls()
+    {
+        if (CreatedWalls == null)
+        {
+            CreatedWalls = new GameObject[RealCountOfWalls];
+        }
+        if (CreatedWalls.Length != RealCountOfWalls)
+        {
+            System.Array.Resize(ref CreatedWalls, RealCountOfWalls);
+        }
+        for (int i=0; i< CreatedWalls.Length;i++)
+        {
+            if (CreatedWalls[i] == null)
+            {
+                CreatedWalls[i] = Instantiate(BoxPrefab);
+            }
+            CreatedWalls[i].transform.position = Vector3.down * 10;
+            CreatedWalls[i].gameObject.isStatic = false;
+        }
+    }
+
+    void CreateAndPlacePlayer()
+    {
+        if (playerOnScene == null)
+        {
+            playerOnScene = (Instantiate(PlayerPrefab) as GameObject).GetComponent<Player>();
+        }
+        GenerateFreeCell();
+        while (vertical != 0) GenerateFreeCell();
+        BusyPlaces[horizontal, vertical] = true;
+        playerOnScene.ResetState();
+        playerOnScene.transform.position = ActualCellPosition();
+    }
+
+    void CreateAndPlaceEnemies()
+    {
+        if (Enemies == null)
+        {
+            Enemies = new Enemy[ActualConfig.EnemiesCount];
+        }
+        if (Enemies.Length > ActualConfig.EnemiesCount)
+        {
+            for (int i=Enemies.Length-1; i>ActualConfig.EnemiesCount-1;i--)
+            {
+                Destroy(Enemies[i]);
+            }
+        }
+        if (Enemies.Length > ActualConfig.EnemiesCount)
+        {
+            System.Array.Resize(ref Enemies, ActualConfig.EnemiesCount);
+        }
+        for (int i=0 ;i< Enemies.Length; i++)
+        {
+            if (Enemies[i] == null)
+            {
+                Enemies[i] = (Instantiate(EnemyPrefab)as GameObject).GetComponent<Enemy>();
+            }
+            else 
+            {
+                Enemies[i].ResetState();
+            }
+            GenerateFreeCell();
+            while (vertical < ActualConfig.MapScale*0.75f) GenerateFreeCell();
+            BusyPlaces[horizontal, vertical] = true;
+            Enemies[i].transform.position = ActualCellPosition();
+        }
+    }
+
+    void RebuildMapWallsAndFloor()
+    {
+        if (FinishOnScene == null)
+        {
+            FinishOnScene = Instantiate(FinishPrefab);
+            FinishOnScene.transform.SetParent(transform);
+        }
+        FinishOnScene.transform.position = new Vector3(((ActualConfig.MapScale - 2) / 2f) * Random.Range(-1f, 1f), 0, (ActualConfig.MapScale + 1) / 2f);
+        FinishOnScene.isStatic = true;
+        Floor.localScale = Vector3.one * ActualConfig.MapScale;
+        if (LeftWall == null) LeftWall = CreateCollider();
+        LeftWall.localScale = Vector3.one * ActualConfig.MapScale;
+        LeftWall.position = Vector3.left * ActualConfig.MapScale * 0.5f;
+        LeftWall.LookAt(Vector3.left * ActualConfig.MapScale);
+        if (RightWall == null) RightWall = CreateCollider();
+        RightWall.localScale = Vector3.one * ActualConfig.MapScale;
+        RightWall.position = Vector3.right * ActualConfig.MapScale * 0.5f;
+        RightWall.LookAt(Vector3.right * ActualConfig.MapScale);
+        if (BackWall == null) BackWall = CreateCollider();
+        BackWall.localScale = Vector3.one * ActualConfig.MapScale;
+        BackWall.position = Vector3.back * ActualConfig.MapScale * 0.5f;
+        BackWall.LookAt(Vector3.back * ActualConfig.MapScale);
+        if (FrontWall == null) FrontWall = CreateCollider();
+        FrontWall.localScale = Vector3.one * ActualConfig.MapScale;
+        FrontWall.position = Vector3.forward * ActualConfig.MapScale * 0.5f;
+        FrontWall.LookAt(Vector3.forward * ActualConfig.MapScale);
+    }
+
+    Transform CreateCollider()
+    {
+        GameObject Collider = new GameObject();
+        Collider.transform.parent = transform;
+        Collider.AddComponent<MeshCollider>().sharedMesh = UnityEngine.Resources.GetBuiltinResource<Mesh>("Quad.fbx");
+        return Collider.transform;
+    }
+
+    void PlaceWalls()
+    {
+        for (int i=0; i< CreatedWalls.Length;i++)
+        {
+            while (true)
+            {
+                GenerateFreeCell();
+                CreatedWalls[i].transform.position = ActualCellPosition();
+                if (!MapIsValid())
+                {
+                    continue;
+                }
+                BusyPlaces[horizontal, vertical] = true;
+                break;
+            }
+        }
+    }
+
     public Vector3 GetPath(Vector3 MyPos)
     {
         surface.BuildNavMesh();
@@ -58,8 +198,8 @@ public class MapMaker : MonoBehaviour
         NavMeshPath path1 = new NavMeshPath();
         while (!isWorkingPoint)
         {
-            GetFreeCell();
-            randPoint = CellPosition();
+            GenerateFreeCell();
+            randPoint = ActualCellPosition();
             if (NavMesh.SamplePosition(randPoint, out NavMeshHit hit, 0.1f, NavMesh.AllAreas))
             {
                 if (NavMesh.SamplePosition(MyPos, out NavMeshHit hit1, 0.1f, NavMesh.AllAreas))
@@ -76,84 +216,52 @@ public class MapMaker : MonoBehaviour
         return path.corners[path.corners.Length-1];
         //Пробовал прокидывать просто путь - не выходит. Просто InvalidPath. Сам вычисляет - всё классно
     }
-    bool isPathAccess()
+
+    bool MapIsValid()
     {
         surface.BuildNavMesh();
-        NavMeshHit hit, hit1;
-        if (NavMesh.SamplePosition(FinishPos, out hit1, 0.1f, NavMesh.AllAreas))
+        if (!IsPathAccessible(playerOnScene.transform.position, FinishOnScene.transform.position))
         {
-            if (NavMesh.SamplePosition(PlayerPos, out hit, 0.1f, NavMesh.AllAreas))
+            return false;
+        }
+        for (int i=0; i<Enemies.Length; i++)
+        {
+            if (!IsPathAccessible(Enemies[i].transform.position, playerOnScene.transform.position))
             {
-                NavMesh.CalculatePath(hit.position, hit1.position, NavMesh.AllAreas, path);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool IsPathAccessible(Vector3 StartPath, Vector3 EndPath)
+    {
+        if (NavMesh.SamplePosition(StartPath, out NavMeshHit hit1, 0.1f, NavMesh.AllAreas))
+        {
+            if (NavMesh.SamplePosition(EndPath, out NavMeshHit hit2, 0.1f, NavMesh.AllAreas))
+            {
+                NavMesh.CalculatePath(hit2.position, hit1.position, NavMesh.AllAreas, path);
                 return (path.status == NavMeshPathStatus.PathComplete);
             }
         }
         return false;
     }
-    void MakeATile(TileType type)
+
+    Vector3 ActualCellPosition()
     {
-        switch (type)
-        {
-            case (TileType.Box):
-                GameObject Box = Instantiate(BoxPrefab, Vector3.down * 10, Quaternion.identity);
-                bool isFinishAccessible = false;
-                int count = 0;
-                while (!isFinishAccessible)
-                {
-                    GetFreeCell();
-                    Box.transform.position = CellPosition();
-                    if (isPathAccess())
-                    {
-                        isTilesBusy[horizontal, vertical] = true;
-                        Box.gameObject.isStatic = true;
-                        Box.transform.GetChild(0).gameObject.isStatic = true;
-                        isFinishAccessible = true;
-                    }
-                    else
-                    {
-                        count++;
-                    }
-                    if (count == 10)
-                    {
-                        Box.transform.position += Vector3.up * 2;
-                        isFinishAccessible = true;
-                    }
-                }
-                break;
-            case (TileType.Player):
-                GetFreeCell();
-                while (horizontal != 0) GetFreeCell();
-                isTilesBusy[horizontal, vertical] = true;
-                PlayerPos = Instantiate(PlayerPrefab, CellPosition(), Quaternion.identity).transform.position;
-                break;
-            case (TileType.Enemy):
-                GetFreeCell();
-                while (horizontal<mapSize*0.75f) GetFreeCell();
-                isTilesBusy[horizontal, vertical] = true;
-                Instantiate(EnemyPrefab, CellPosition(), Quaternion.identity);
-                break;
-        }
+        return new Vector3((-ActualConfig.MapScale+1)/2f + horizontal, 0, (-ActualConfig.MapScale+1) / 2f + vertical);
     }
-    Vector3 CellPosition()
+
+    void GenerateFreeCell()
     {
-        return new Vector3((-mapSize+1)/2f + vertical, 0, (-mapSize+1) / 2f + horizontal);
-    }
-    void GetFreeCell()
-    {
-        bool isDone = false;
-        while (!isDone)
+        while (true)
         {
-            horizontal = Random.Range(0, mapSize);
-            vertical = Random.Range  (0, mapSize);
-            if (!isTilesBusy[horizontal,vertical])
+            horizontal = Random.Range(0, ActualConfig.MapScale);
+            vertical = Random.Range  (0, ActualConfig.MapScale);
+            if (!BusyPlaces[horizontal,vertical])
             {
-                isDone = true;
+                return;
             }
         }
     }
-    public void StopMusic()
-    {
-        GetComponent<AudioSource>().Stop();
-    }
 }
-
